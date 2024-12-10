@@ -1,10 +1,13 @@
+---@class TreesitterContext
+---@field node_type string Type of the current node
+---@field parent_types string[] Types of parent nodes
+---@field scope_text string? Text of the containing scope (e.g. function body)
+---@field scope_type string? Type of the containing scope (e.g. "function_definition")
+
 ---@class DiagnosticContext
 ---@field diagnostic {severity: integer, message: string, source: string|nil, code: integer|string|nil} The LSP diagnostic info
 ---@field lines string[] The context lines around the diagnostic
 ---@field start_line integer Starting line number of the context
 ---@field end_line integer Ending line number of the context
 ---@field position {row: integer, col: integer} Position of the diagnostic
-
----@class Config
----@field context_lines integer Number of lines before and after diagnostic
----@field filters table<string,boolean> Filters for diagnostic severities
+---@field treesitter TreesitterContext Treesitter context information
