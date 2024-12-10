@@ -1,44 +1,100 @@
-local M = {}
-
 ---@class TemplateEngine
 ---@field private patterns table<string,string>
+---@field private filters table<string,fun(value:any,...):any>
 local Engine = {}
 
+---Create a new template engine instance
+---@return TemplateEngine
 function Engine.new()
 	return setmetatable({
 		patterns = {
 			var = "{{%s*([^}]+)%s*}}",
 			if_start = "{%%%s*if%s+([^}]+)%s*%%}",
 			if_end = "{%%%s*endif%s*%%}",
-			for_start = "{%%%s*for%s+([^}]+)%s*%%}",
+			for_start = "{%%%s*for%s+([^}]+)%s+in%s+([^}]+)%s*%%}",
 			for_end = "{%%%s*endfor%s*%%}",
+			filter = "([^|]+)|%s*([^:]+)(:?%s*[^}]*)",
+		},
+		filters = {
+			join = function(value, sep)
+				if type(value) ~= "table" then
+					return tostring(value)
+				end
+				return table.concat(value, sep or ", ")
+			end,
+			length = function(value)
+				if type(value) ~= "table" then
+					return 0
+				end
+				local count = 0
+				for _ in pairs(value) do
+					count = count + 1
+				end
+				return count
+			end,
+			escape_xml = function(value)
+				if type(value) ~= "string" then
+					value = tostring(value)
+				end
+				local replacements = {
+					["&"] = "&amp;",
+					["<"] = "&lt;",
+					[">"] = "&gt;",
+					['"'] = "&quot;",
+					["'"] = "&apos;",
+				}
+				return value:gsub("[&<>\"']", replacements)
+			end,
 		},
 	}, { __index = Engine })
 end
 
----Render template with context
----@param template string
----@param context table
----@return string
-function Engine:render(template, context)
-	local result = template
+---Apply filters to a value
+---@param value any
+---@param filter_str string
+---@return any
+function Engine:apply_filters(value, filter_str)
+	local filter_name, args = filter_str:match("([^:]+):?(.*)")
+	local filter = self.filters[filter_name]
+	if not filter then
+		error(string.format("Unknown filter: %s", filter_name))
+	end
 
-	-- Replace simple variables
-	result = result:gsub(self.patterns.var, function(var)
-		local value = self:resolve_var(var:match("^%s*(.-)%s*$"), context)
-		if type(value) == "table" then
-			return vim.inspect(value)
+	-- Parse filter arguments
+	local filter_args = {}
+	if args ~= "" then
+		for arg in args:gmatch("[^,]+") do
+			table.insert(filter_args, arg:match("^%s*(.-)%s*$"))
 		end
-		return tostring(value or "")
-	end)
+	end
 
-	-- Handle if statements
-	result = self:handle_if_blocks(result, context)
+	return filter(value, unpack(filter_args))
+end
 
-	-- Handle for loops
-	result = self:handle_for_blocks(result, context)
+---Resolve variable from context, including filters
+---@param expr string
+---@param context table
+---@return any
+function Engine:resolve_expr(expr, context)
+	-- Check for filters
+	local var_expr = expr
+	local filters = {}
 
-	return result
+	-- Extract filters if present
+	for value, filter, args in expr:gmatch(self.patterns.filter) do
+		var_expr = value:match("^%s*(.-)%s*$")
+		table.insert(filters, filter .. args)
+	end
+
+	-- Resolve the variable
+	local value = self:resolve_var(var_expr, context)
+
+	-- Apply filters in order
+	for _, filter in ipairs(filters) do
+		value = self:apply_filters(value, filter)
+	end
+
+	return value
 end
 
 ---Resolve variable from context
@@ -46,17 +102,73 @@ end
 ---@param context table
 ---@return any
 function Engine:resolve_var(var, context)
-	local parts = vim.split(var, ".", { plain = true })
+	-- Handle literal values
+	if var:match("^'.*'$") or var:match('^".*"$') then
+		return var:sub(2, -2)
+	end
+
+	-- Handle simple expressions
+	if var:match("^%d+$") then
+		return tonumber(var)
+	end
+
+	-- Handle boolean literals
+	if var == "true" then
+		return true
+	end
+	if var == "false" then
+		return false
+	end
+
+	-- Handle nil
+	if var == "nil" or var == "null" then
+		return nil
+	end
+
+	-- Handle table access with dots
+	local parts = vim.split(var, "%.", { plain = false })
 	local value = context
 
 	for _, part in ipairs(parts) do
+		-- Handle array indexing
+		local array_index = part:match("^(%d+)$")
+		if array_index then
+			part = tonumber(array_index)
+		end
+
 		if type(value) ~= "table" then
 			return nil
 		end
 		value = value[part]
+		if value == nil then
+			return nil
+		end
 	end
 
 	return value
+end
+
+---Evaluate a condition
+---@param condition string
+---@param context table
+---@return boolean
+function Engine:eval_condition(condition, context)
+	-- Handle basic comparisons
+	local left, op, right = condition:match("(.+)%s*([=!]=)%s*(.+)")
+	if left and op and right then
+		local lval = self:resolve_expr(left, context)
+		local rval = self:resolve_expr(right, context)
+		if op == "==" then
+			return lval == rval
+		end
+		if op == "!=" then
+			return lval ~= rval
+		end
+	end
+
+	-- Handle existence check
+	local value = self:resolve_expr(condition, context)
+	return value ~= nil and value ~= false and value ~= ""
 end
 
 ---Handle if blocks in template
@@ -73,8 +185,8 @@ function Engine:handle_if_blocks(template, context)
 			break
 		end
 
-		local value = self:resolve_var(condition, context)
-		local replacement = value and content or ""
+		local should_render = self:eval_condition(condition, context)
+		local replacement = should_render and content or ""
 		result = result:sub(1, start - 1) .. replacement .. result:sub(finish + 1)
 	end
 
@@ -90,28 +202,80 @@ function Engine:handle_for_blocks(template, context)
 	local pattern = self.patterns.for_start .. "(.-)" .. self.patterns.for_end
 
 	while true do
-		local start, finish, iterator, content = result:find(pattern)
+		local start, finish, var, collection, content = result:find(pattern)
 		if not start then
 			break
 		end
 
-		local var, collection = iterator:match("(%w+)%s+in%s+(.+)")
-		local items = self:resolve_var(collection, context)
+		local items = self:resolve_expr(collection, context)
+		local replacements = {}
 
 		if type(items) == "table" then
-			local replacements = {}
-			for _, item in ipairs(items) do
-				local item_context = vim.tbl_extend("force", {}, context, { [var] = item })
-				table.insert(replacements, self:render(content, item_context))
+			-- Handle both array-like and dictionary tables
+			local is_array = #items > 0
+			if is_array then
+				for i, item in ipairs(items) do
+					local loop_context = vim.tbl_extend("force", {}, context, {
+						[var] = item,
+						loop = {
+							index = i,
+							first = i == 1,
+							last = i == #items,
+						},
+					})
+					table.insert(replacements, self:render(content, loop_context))
+				end
+			else
+				local i = 1
+				local len = self.filters.length(items)
+				for k, v in pairs(items) do
+					local loop_context = vim.tbl_extend("force", {}, context, {
+						[var] = { key = k, value = v },
+						loop = {
+							index = i,
+							first = i == 1,
+							last = i == len,
+						},
+					})
+					table.insert(replacements, self:render(content, loop_context))
+					i = i + 1
+				end
 			end
-			result = result:sub(1, start - 1) .. table.concat(replacements) .. result:sub(finish + 1)
-		else
-			result = result:sub(1, start - 1) .. result:sub(finish + 1)
 		end
+
+		result = result:sub(1, start - 1) .. table.concat(replacements) .. result:sub(finish + 1)
 	end
 
 	return result
 end
 
+---Render template with context
+---@param template string
+---@param context table
+---@return string
+function Engine:render(template, context)
+	local result = template
+
+	-- Replace expressions with values
+	result = result:gsub(self.patterns.var, function(expr)
+		local value = self:resolve_expr(expr:match("^%s*(.-)%s*$"), context)
+		if value == nil then
+			return ""
+		end
+		if type(value) == "table" then
+			return vim.inspect(value)
+		end
+		return tostring(value)
+	end)
+
+	-- Handle control structures
+	result = self:handle_if_blocks(result, context)
+	result = self:handle_for_blocks(result, context)
+
+	return result
+end
+
+local M = {}
 M.Engine = Engine
+
 return M
