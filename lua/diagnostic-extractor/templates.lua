@@ -4,7 +4,6 @@ local M = {}
 
 ---@type table<string,string>
 M.templates = {
-	-- Fix template focused on solving the issue
 	fix = [[
 DIAGNOSTIC REPORT
 ===============
@@ -14,22 +13,26 @@ File: {{ filename }}
 ERROR DETAILS
 ------------
 Message: {{ diagnostic.diagnostic.message }}
-Location: Line {{ diagnostic.position.row + 1 }}, Column {{ diagnostic.position.col + 1 }}
+Location: Line {{ diagnostic.position.row and diagnostic.position.row + 1 or "unknown" }}, Column {{ diagnostic.position.col and diagnostic.position.col + 1 or "unknown" }}
 Severity: {{ diagnostic.diagnostic.severity_name }}
 {% if diagnostic.diagnostic.code %}Code: {{ diagnostic.diagnostic.code }}{% endif %}
 {% if diagnostic.diagnostic.source %}Source: {{ diagnostic.diagnostic.source }}{% endif %}
 
 CODE CONTEXT
 -----------
+{% if diagnostic.lines and #diagnostic.lines > 0 %}
 {% for line in diagnostic.lines %}
 {{ loop.first ? "..." : "" }}{{ diagnostic.position.row + 1 == diagnostic.start_line + loop.index - 1 ? ">" : " " }} {{ diagnostic.start_line + loop.index }}: {{ line }}{{ loop.last ? "..." : "" }}
 {% endfor %}
+{% else %}
+No code context available
+{% endif %}
 
 SYNTAX CONTEXT
 -------------
-Current Node: {{ diagnostic.treesitter.node_type }}
-Syntax Path: {{ diagnostic.treesitter.parent_types|join " -> " }}
-Scope: {{ diagnostic.treesitter.scope_type }}
+Current Node: {{ diagnostic.treesitter.node_type or "unknown" }}
+Syntax Path: {{ diagnostic.treesitter.parent_types and (diagnostic.treesitter.parent_types|join " -> ") or "unknown" }}
+Scope: {{ diagnostic.treesitter.scope_type or "unknown" }}
 
 {% if diagnostic.treesitter.type_info %}
 TYPE INFORMATION
@@ -54,7 +57,6 @@ Please analyze this error and provide:
 1. A clear explanation of the problem
 2. The corrected code
 3. Any best practices to prevent similar issues]],
-
 	-- XML format for structured data
 	xml = [[<?xml version="1.0" encoding="UTF-8"?>
 <diagnostic-report>
