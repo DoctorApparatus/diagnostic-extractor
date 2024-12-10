@@ -2,6 +2,9 @@ local template_engine = require("diagnostic-extractor.template_engine")
 
 local M = {}
 
+-- Create a single instance of the template engine
+local engine = template_engine.Engine.new()
+
 ---@type table<string,string>
 M.templates = {
 	fix = [[
@@ -111,12 +114,33 @@ function M.generate_prompt(template_name, ctx)
 		},
 	})
 
-	local ok, result = pcall(template_engine.render, template_engine, template, ctx)
+	local ok, result = pcall(engine.render, engine, template, ctx)
 	if not ok then
 		error(string.format("Failed to render template '%s': %s", template_name, result))
 	end
 
 	return result
+end
+
+---Add a new template
+---@param name string
+---@param template string
+---@param override? boolean
+---@return boolean success
+---@return string? error
+function M.add_template(name, template, override)
+	if M.templates[name] and not override then
+		return false, string.format("Template '%s' already exists", name)
+	end
+
+	-- Verify template is valid by trying to render it with empty context
+	local ok, err = pcall(engine.render, engine, template, {})
+	if not ok then
+		return false, string.format("Invalid template: %s", err)
+	end
+
+	M.templates[name] = template
+	return true
 end
 
 return M
