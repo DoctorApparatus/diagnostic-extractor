@@ -45,10 +45,11 @@ local function find_containing_scope(node)
 	return nil
 end
 
+local symbols = require("diagnostic-extractor.symbols")
 ---Get treesitter context for a position
----@param bufnr integer Buffer number
----@param row integer 0-based row number
----@param col integer 0-based column number
+---@param bufnr integer
+---@param row integer
+---@param col integer
 ---@return TreesitterContext|nil
 function M.get_position_context(bufnr, row, col)
 	local parser = vim.treesitter.get_parser(bufnr)
@@ -75,11 +76,17 @@ function M.get_position_context(bufnr, row, col)
 		scope_type = scope_node:type()
 	end
 
+	-- Get type information and symbol references
+	local type_info = symbols.get_type_info(bufnr, row, col)
+	local symbol_refs = symbols.get_symbol_references(bufnr, row, col)
+
 	return {
 		node_type = node:type(),
 		parent_types = get_parent_types(node),
 		scope_text = scope_text,
 		scope_type = scope_type,
+		type_info = type_info,
+		symbol_references = symbol_refs,
 	}
 end
 
