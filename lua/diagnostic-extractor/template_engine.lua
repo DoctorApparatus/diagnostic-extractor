@@ -54,17 +54,25 @@ end
 ---@param filter_str string
 ---@return any
 function Engine:apply_filters(value, filter_str)
-	local filter_name, args = filter_str:match("([^:]+):?(.*)")
+	-- Split filter name and arguments
+	local filter_name, args_str = filter_str:match("^([^%s]+)%s*(.*)$")
 	local filter = self.filters[filter_name]
 	if not filter then
 		error(string.format("Unknown filter: %s", filter_name))
 	end
 
-	-- Parse filter arguments
+	-- Parse filter arguments if they exist
 	local filter_args = {}
-	if args ~= "" then
-		for arg in args:gmatch("[^,]+") do
-			table.insert(filter_args, arg:match("^%s*(.-)%s*$"))
+	if args_str and args_str ~= "" then
+		-- Handle quoted strings and basic values
+		for arg in args_str:gmatch('"([^"]*)"') do
+			table.insert(filter_args, arg)
+		end
+		if #filter_args == 0 then
+			for arg in args_str:gmatch("([^,]+)") do
+				local cleaned = arg:match("^%s*(.-)%s*$")
+				table.insert(filter_args, cleaned)
+			end
 		end
 	end
 

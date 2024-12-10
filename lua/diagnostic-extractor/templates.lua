@@ -28,7 +28,7 @@ CODE CONTEXT
 SYNTAX CONTEXT
 -------------
 Current Node: {{ diagnostic.treesitter.node_type }}
-Syntax Path: {{ diagnostic.treesitter.parent_types|join(" -> ") }}
+Syntax Path: {{ diagnostic.treesitter.parent_types|join " -> " }}
 Scope: {{ diagnostic.treesitter.scope_type }}
 
 {% if diagnostic.treesitter.type_info %}
@@ -36,7 +36,7 @@ TYPE INFORMATION
 ---------------
 {% if diagnostic.treesitter.type_info.type %}Type: {{ diagnostic.treesitter.type_info.type }}{% endif %}
 {% if diagnostic.treesitter.type_info.type_source %}Inferred From: {{ diagnostic.treesitter.type_info.type_source }}{% endif %}
-{% if diagnostic.treesitter.type_info.traits %}Traits: {{ diagnostic.treesitter.type_info.traits|join(", ") }}{% endif %}
+{% if diagnostic.treesitter.type_info.traits %}Traits: {{ diagnostic.treesitter.type_info.traits|join ", " }}{% endif %}
 {% endif %}
 
 {% if diagnostic.treesitter.symbol_references %}
@@ -87,7 +87,7 @@ Please analyze this error and provide:
 
   <syntax-info>
     <node-type>{{ diagnostic.treesitter.node_type|escape_xml }}</node-type>
-    <syntax-path>{{ diagnostic.treesitter.parent_types|join(" -> ")|escape_xml }}</syntax-path>
+    <syntax-path>{{ diagnostic.treesitter.parent_types|join " -> "|escape_xml }}</syntax-path>
     <scope-type>{{ diagnostic.treesitter.scope_type|escape_xml }}</scope-type>
   </syntax-info>
 
@@ -134,11 +134,11 @@ Location: Line {{ diagnostic.position.row + 1 }}, Column {{ diagnostic.position.
 Node: {{ diagnostic.treesitter.node_type }}
 {% if diagnostic.treesitter.type_info and diagnostic.treesitter.type_info.type %}Type: {{ diagnostic.treesitter.type_info.type }}{% endif %}]],
 
-	-- JSON Lines format for streaming processing
+	-- JSONL format for streaming processing
 	jsonl = [[{"type": "metadata", "language": "{{ language }}", "filename": "{{ filename }}", "timestamp": {{ timestamp }} }
 {"type": "error", "message": "{{ diagnostic.diagnostic.message }}", "severity": "{{ diagnostic.diagnostic.severity_name }}", "line": {{ diagnostic.position.row + 1 }}, "column": {{ diagnostic.position.col + 1 }}{% if diagnostic.diagnostic.code %}, "code": "{{ diagnostic.diagnostic.code }}"{% endif %}{% if diagnostic.diagnostic.source %}, "source": "{{ diagnostic.diagnostic.source }}"{% endif %}}
 {% for line in diagnostic.lines %}{"type": "context", "line_number": {{ diagnostic.start_line + loop.index }}, "content": "{{ line|replace('"', '\\"') }}", "is_error_line": {{ diagnostic.position.row + 1 == diagnostic.start_line + loop.index - 1 }}}
-{% endfor %}{"type": "syntax", "node_type": "{{ diagnostic.treesitter.node_type }}", "syntax_path": "{{ diagnostic.treesitter.parent_types|join(' -> ') }}", "scope_type": "{{ diagnostic.treesitter.scope_type }}"}
+{% endfor %}{"type": "syntax", "node_type": "{{ diagnostic.treesitter.node_type }}", "syntax_path": "{{ diagnostic.treesitter.parent_types|join " -> " }}", "scope_type": "{{ diagnostic.treesitter.scope_type }}"}
 {% if diagnostic.treesitter.type_info %}{"type": "type_info"{% if diagnostic.treesitter.type_info.type %}, "type": "{{ diagnostic.treesitter.type_info.type }}"{% endif %}{% if diagnostic.treesitter.type_info.type_source %}, "inference_source": "{{ diagnostic.treesitter.type_info.type_source }}"{% endif %}{% if diagnostic.treesitter.type_info.traits %}, "traits": [{% for trait in diagnostic.treesitter.type_info.traits %}"{{ trait }}"{{ not loop.last ? "," : "" }}{% endfor %}]{% endif %}}{% endif %}
 {% if diagnostic.treesitter.symbol_references %}{"type": "symbol_info", "name": "{{ diagnostic.treesitter.symbol_references.name }}"{% if diagnostic.treesitter.symbol_references.type %}, "type": "{{ diagnostic.treesitter.symbol_references.type }}"{% endif %}{% if diagnostic.treesitter.symbol_references.kind %}, "kind": "{{ diagnostic.treesitter.symbol_references.kind }}"{% endif %}, "reference_count": {{ diagnostic.treesitter.symbol_references.references|length }}, "references": [{% for ref in diagnostic.treesitter.symbol_references.references %}{"line": {{ ref.row + 1 }}, "column": {{ ref.col + 1 }}}{{ not loop.last ? "," : "" }}{% endfor %}]}{% endif %}]],
 }
