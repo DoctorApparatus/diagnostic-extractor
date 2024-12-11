@@ -1,12 +1,17 @@
-local template_engine = require("diagnostic-extractor.template_engine")
+---@mod diagnostic-extractor.template
+---@brief [[
+---Template management for diagnostic extraction
+---@brief ]]
+
+local TemplateManager = require("diagnostic-extractor.template_engine").TemplateManager
+
+-- Single template manager instance
+local manager = nil
 
 local M = {}
 
--- Create a single instance of the template engine
-local engine = template_engine.Engine.new()
-
----@type table<string,string>
-M.templates = {
+---Default diagnostic analysis template
+local default_templates = {
 	fix = [[
 DIAGNOSTIC REPORT
 ===============
@@ -16,20 +21,20 @@ File: {{ filename|default "unknown" }}
 ERROR DETAILS
 ------------
 Message: {{ diagnostic.diagnostic.message }}
-Location: Line {{ diagnostic.position.row + 1 }}, Column {{ diagnostic.position.col + 1 }}
-Severity: {{ diagnostic.diagnostic.severity_name }}
-{% if diagnostic.diagnostic.code %}
-Code: {{ diagnostic.diagnostic.code }}
+Location: Line {{ diagnostic.range.start.row + 1 }}, Column {{ diagnostic.range.start.col + 1 }}
+Severity: {{ diagnostic.severity_name }}
+{% if diagnostic.code %}
+Code: {{ diagnostic.code }}
 {% endif %}
-{% if diagnostic.diagnostic.source %}
-Source: {{ diagnostic.diagnostic.source }}
+{% if diagnostic.source %}
+Source: {{ diagnostic.source }}
 {% endif %}
 
 CODE CONTEXT
 -----------
-{% if diagnostic.lines %}
-{% for line in diagnostic.lines %}
-{{ diagnostic.position.row + 1 == diagnostic.start_line + loop.index - 1 ? ">" : " " }} {{ diagnostic.start_line + loop.index }}: {{ line }}
+{% if diagnostic.context.lines %}
+{% for line in diagnostic.context.lines %}
+{{ diagnostic.range.start.row + 1 == diagnostic.context.start_line + loop.index - 1 ? ">" : " " }} {{ diagnostic.context.start_line + loop.index }}: {{ line }}
 {% endfor %}
 {% else %}
 No code context available
@@ -37,33 +42,37 @@ No code context available
 
 SYNTAX CONTEXT
 -------------
-Current Node: {{ diagnostic.treesitter.node_type|default "unknown" }}
-Syntax Path: {{ diagnostic.treesitter.parent_types|join " -> "|default "unknown" }}
-Scope: {{ diagnostic.treesitter.scope_type|default "unknown" }}
+{% if diagnostic.context.treesitter %}
+Current Node: {{ diagnostic.context.treesitter.node_type|default "unknown" }}
+Syntax Path: {{ diagnostic.context.treesitter.parent_types|join " -> "|default "unknown" }}
+{% if diagnostic.context.treesitter.scope %}
+Scope: {{ diagnostic.context.treesitter.scope.type|default "unknown" }}
+{% endif %}
 
-{% if diagnostic.treesitter.type_info %}
+{% if diagnostic.context.treesitter.type_info %}
 TYPE INFORMATION
 ---------------
-Type: {{ diagnostic.treesitter.type_info.type|default "unknown" }}
-{% if diagnostic.treesitter.type_info.type_source %}
-Inferred From: {{ diagnostic.treesitter.type_info.type_source }}
+Type: {{ diagnostic.context.treesitter.type_info.type|default "unknown" }}
+{% if diagnostic.context.treesitter.type_info.source %}
+Inferred From: {{ diagnostic.context.treesitter.type_info.source }}
 {% endif %}
-{% if diagnostic.treesitter.type_info.traits %}
-Traits: {{ diagnostic.treesitter.type_info.traits|join ", " }}
+{% if diagnostic.context.treesitter.type_info.traits %}
+Traits: {{ diagnostic.context.treesitter.type_info.traits|join ", " }}
 {% endif %}
 {% endif %}
 
-{% if diagnostic.treesitter.symbol_references %}
+{% if diagnostic.context.treesitter.symbol_info %}
 SYMBOL INFORMATION
 ----------------
-Name: {{ diagnostic.treesitter.symbol_references.name }}
-{% if diagnostic.treesitter.symbol_references.type %}
-Type: {{ diagnostic.treesitter.symbol_references.type }}
+Name: {{ diagnostic.context.treesitter.symbol_info.name }}
+{% if diagnostic.context.treesitter.symbol_info.type %}
+Type: {{ diagnostic.context.treesitter.symbol_info.type }}
 {% endif %}
-{% if diagnostic.treesitter.symbol_references.kind %}
-Kind: {{ diagnostic.treesitter.symbol_references.kind }}
+{% if diagnostic.context.treesitter.symbol_info.kind %}
+Kind: {{ diagnostic.context.treesitter.symbol_info.kind }}
 {% endif %}
-Reference Count: {{ diagnostic.treesitter.symbol_references.references|length }}
+Reference Count: {{ diagnostic.context.treesitter.symbol_info.references|length }}
+{% endif %}
 {% endif %}
 
 TASK
@@ -71,76 +80,45 @@ TASK
 Please analyze this error and provide:
 1. A clear explanation of the problem
 2. The corrected code
-3. Any best practices to prevent similar issues]],
+3. Any best practices to prevent similar issues
+]],
 }
 
----Generate prompt from a template
----@param template_name string
----@param ctx table
----@return string
-function M.generate_prompt(template_name, ctx)
-	local template = M.templates[template_name]
-	if not template then
-		error(
-			string.format(
-				"Template '%s' not found. Available templates: %s",
-				template_name,
-				table.concat(vim.tbl_keys(M.templates), ", ")
-			)
-		)
+---Get global template manager
+---@return TemplateManager
+function M.get_manager()
+	if not manager then
+		manager = TemplateManager.new()
+
+		-- Register default templates
+		for name, source in pairs(default_templates) do
+			local ok, err = manager:register(name, source)
+			if not ok then
+				error(string.format("Failed to register template '%s': %s", name, err))
+			end
+		end
 	end
+	return manager
+end
 
-	-- Ensure all required fields exist
-	ctx = vim.tbl_deep_extend("keep", ctx, {
-		language = "unknown",
-		filename = "unknown",
-		diagnostic = {
-			diagnostic = {
-				message = "",
-				severity_name = "UNKNOWN",
-			},
-			position = {
-				row = 0,
-				col = 0,
-			},
-			start_line = 0,
-			end_line = 0,
-			lines = {},
-			treesitter = {
-				node_type = "unknown",
-				parent_types = {},
-				scope_type = "unknown",
-			},
-		},
-	})
-
-	local ok, result = pcall(engine.render, engine, template, ctx)
-	if not ok then
-		error(string.format("Failed to render template '%s': %s", template_name, result))
+---Get available templates
+---@return table<string,boolean>
+function M.get_templates()
+	local templates = {}
+	for name, _ in pairs(default_templates) do
+		templates[name] = true
 	end
-
-	return result
+	return templates
 end
 
 ---Add a new template
----@param name string
----@param template string
----@param override? boolean
+---@param name string Template name
+---@param source string Template source
+---@param opts? {override?: boolean}
 ---@return boolean success
 ---@return string? error
-function M.add_template(name, template, override)
-	if M.templates[name] and not override then
-		return false, string.format("Template '%s' already exists", name)
-	end
-
-	-- Verify template is valid by trying to render it with empty context
-	local ok, err = pcall(engine.render, engine, template, {})
-	if not ok then
-		return false, string.format("Invalid template: %s", err)
-	end
-
-	M.templates[name] = template
-	return true
+function M.add_template(name, source, opts)
+	return M.get_manager():register(name, source, opts)
 end
 
 return M

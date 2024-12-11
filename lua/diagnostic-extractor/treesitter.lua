@@ -1,9 +1,20 @@
+---@mod diagnostic-extractor.treesitter
+---@brief [[
+---Treesitter analysis functionality
+---@brief ]]
+
 local M = {}
 
----Get a list of parent node types
----@param node TSNode Current node
----@param max_parents? integer Maximum number of parents to include
----@return string[] parent_types
+---Options for getting position context
+---@class ContextOptions
+---@field max_parents integer? Maximum number of parent nodes to include
+---@field include_types boolean? Include type information
+---@field include_symbols boolean? Include symbol information
+
+---Get parent node types
+---@param node TSNode
+---@param max_parents? integer
+---@return string[]
 local function get_parent_types(node, max_parents)
 	max_parents = max_parents or 5
 	local types = {}
@@ -23,10 +34,10 @@ local function get_parent_types(node, max_parents)
 	return types
 end
 
----Find the smallest containing scope (e.g., function, class, block)
----@param node TSNode Starting node
----@return TSNode|nil scope_node
-local function find_containing_scope(node)
+---Find containing scope node
+---@param node TSNode
+---@return TSNode?
+local function find_scope_node(node)
 	local scope_types = {
 		function_definition = true,
 		method_definition = true,
@@ -45,13 +56,33 @@ local function find_containing_scope(node)
 	return nil
 end
 
-local symbols = require("diagnostic-extractor.symbols")
----Get treesitter context for a position
+---Get scope information
+---@param scope_node TSNode
+---@param bufnr integer
+---@return TreesitterScope
+local function get_scope_info(scope_node, bufnr)
+	local start_row, start_col, end_row, end_col = scope_node:range()
+
+	return {
+		type = scope_node:type(),
+		text = vim.treesitter.get_node_text(scope_node, bufnr),
+		range = {
+			start = { row = start_row, col = start_col },
+			["end"] = { row = end_row, col = end_col },
+		},
+	}
+end
+
+---Get treesitter context for position
 ---@param bufnr integer
 ---@param row integer
 ---@param col integer
----@return TreesitterContext|nil
-function M.get_position_context(bufnr, row, col)
+---@param opts? ContextOptions
+---@return TreesitterContext?
+function M.get_position_context(bufnr, row, col, opts)
+	opts = opts or {}
+
+	-- Get parser and tree
 	local parser = vim.treesitter.get_parser(bufnr)
 	if not parser then
 		return nil
@@ -62,32 +93,39 @@ function M.get_position_context(bufnr, row, col)
 		return nil
 	end
 
+	-- Get node at position
 	local root = tree:root()
 	local node = root:named_descendant_for_range(row, col, row, col)
 	if not node then
 		return nil
 	end
 
-	-- Get containing scope
-	local scope_node = find_containing_scope(node)
-	local scope_text, scope_type
+	-- Build context
+	local result = {
+		node_type = node:type(),
+		parent_types = get_parent_types(node, opts.max_parents),
+		scope = nil,
+		type_info = nil,
+		symbol_info = nil,
+	}
+
+	-- Get scope information
+	local scope_node = find_scope_node(node)
 	if scope_node then
-		scope_text = vim.treesitter.get_node_text(scope_node, bufnr)
-		scope_type = scope_node:type()
+		result.scope = get_scope_info(scope_node, bufnr)
 	end
 
-	-- Get type information and symbol references
-	local type_info = symbols.get_type_info(bufnr, row, col)
-	local symbol_refs = symbols.get_symbol_references(bufnr, row, col)
+	-- Get type information if requested
+	if opts.include_types then
+		result.type_info = require("diagnostic-extractor.lsp").get_type_info(bufnr, row, col)
+	end
 
-	return {
-		node_type = node:type(),
-		parent_types = get_parent_types(node),
-		scope_text = scope_text,
-		scope_type = scope_type,
-		type_info = type_info,
-		symbol_references = symbol_refs,
-	}
+	-- Get symbol information if requested
+	if opts.include_symbols then
+		result.symbol_info = require("diagnostic-extractor.lsp").get_symbol_info(bufnr, row, col)
+	end
+
+	return result
 end
 
 return M

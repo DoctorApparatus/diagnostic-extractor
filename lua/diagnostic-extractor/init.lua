@@ -1,19 +1,11 @@
 ---@mod diagnostic-extractor
 ---@brief [[
---- A Neovim plugin for extracting diagnostics with context and types
+---A Neovim plugin for extracting diagnostics with context
 ---@brief ]]
 
-local extract = require("diagnostic-extractor.extract")
-local templates = require("diagnostic-extractor.templates")
-
----@class Config
----@field context_lines integer Number of lines before and after diagnostic
----@field filters table<string,boolean> Filters for diagnostic severities
-
----@class DiagnosticExtractor
 local M = {}
 
----@type Config
+---@type ExtractionOptions
 local default_config = {
 	context_lines = 2,
 	filters = {
@@ -22,34 +14,39 @@ local default_config = {
 		INFO = true,
 		HINT = true,
 	},
+	include_treesitter = true,
+	include_types = true,
+	include_symbols = true,
 }
 
----@type Config
-M.config = default_config
+---@type ExtractionOptions
+M.config = vim.deepcopy(default_config)
 
 ---Setup the plugin
----@param opts? Config
+---@param opts? ExtractionOptions
 function M.setup(opts)
 	M.config = vim.tbl_deep_extend("force", default_config, opts or {})
 end
 
----Extract diagnostics with context from current buffer
----@return table JSON-serializable diagnostic data
-function M.extract()
-	return extract.extract_diagnostics(M.config)
+---Extract diagnostics from current buffer
+---@param opts? ExtractionOptions
+---@return ExtractionResult
+function M.extract(opts)
+	opts = vim.tbl_deep_extend("force", M.config, opts or {})
+	return require("diagnostic-extractor.extract").extract_diagnostics(opts)
 end
 
----Extract diagnostics and format as JSON
----@return string JSON-formatted diagnostic data
-function M.extract_json()
-	local data = M.extract()
-	return vim.json.encode(data)
+---Extract diagnostics as JSON
+---@param opts? ExtractionOptions
+---@return string
+function M.extract_json(opts)
+	return vim.json.encode(M.extract(opts))
 end
 
----Generate LLM prompt for diagnostic
----@param template_name string Name of the template to use
----@param diagnostic_index? integer Index of diagnostic to use (defaults to first)
----@return string prompt The generated prompt
+---Generate diagnostic prompt
+---@param template_name string
+---@param diagnostic_index? integer
+---@return string
 function M.generate_prompt(template_name, diagnostic_index)
 	diagnostic_index = diagnostic_index or 1
 
@@ -58,39 +55,36 @@ function M.generate_prompt(template_name, diagnostic_index)
 		error(string.format("No diagnostic at index %d", diagnostic_index))
 	end
 
-	local ctx = {
+	local manager = require("diagnostic-extractor.template").get_manager()
+	return manager:render(template_name, {
 		filename = data.filename,
 		language = data.language,
 		diagnostic = data.diagnostics[diagnostic_index],
-	}
-
-	return templates.generate_prompt(template_name, ctx)
+	})
 end
 
--- Create plugin commands
+-- Create commands
 local function create_commands()
-	-- Command to extract diagnostics to JSON
 	vim.api.nvim_create_user_command("DiagnosticExtract", function()
 		local json = M.extract_json()
+		local formatted = json
 
-		-- Format JSON if possible
-		local formatted_json = json
-		local ok, formatted = pcall(function()
+		-- Try to format with jq if available
+		local ok, result = pcall(function()
 			return vim.fn.system({ "jq", "." }, json)
 		end)
 		if ok and vim.v.shell_error == 0 then
-			formatted_json = formatted
+			formatted = result
 		end
 
 		-- Open in new buffer
 		local bufnr = vim.api.nvim_create_buf(false, true)
-		vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(formatted_json, "\n"))
+		vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(formatted, "\n"))
 		vim.api.nvim_command("vsplit")
 		vim.api.nvim_win_set_buf(0, bufnr)
 		vim.bo[bufnr].filetype = "json"
 	end, {})
 
-	-- Command to generate LLM prompt
 	vim.api.nvim_create_user_command("DiagnosticPrompt", function(opts)
 		local args = vim.split(opts.args, "%s+")
 		local template = args[1] or "fix"
@@ -102,12 +96,12 @@ local function create_commands()
 	end, {
 		nargs = "*",
 		complete = function()
-			return vim.tbl_keys(templates.templates)
+			return vim.tbl_keys(require("diagnostic-extractor.template").get_templates())
 		end,
 	})
 end
 
--- Initialize the plugin
+-- Initialize plugin
 local function init()
 	create_commands()
 end
