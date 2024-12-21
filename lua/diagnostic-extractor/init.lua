@@ -43,20 +43,60 @@ function M.extract_json(opts)
 	return vim.json.encode(M.extract(opts))
 end
 
----Generate diagnostic prompt
----@param template_name string
----@param diagnostic_index? integer
----@return string
-function M.generate_prompt(template_name, diagnostic_index)
-	diagnostic_index = diagnostic_index or 1
+---Get diagnostic under cursor
+---@return vim.Diagnostic?
+local function get_cursor_diagnostic()
+	local bufnr = vim.api.nvim_get_current_buf()
+	local cursor = vim.api.nvim_win_get_cursor(0)
+	local cursor_row = cursor[1] - 1 -- Convert to 0-based
+	local cursor_col = cursor[2]
+
+	local diagnostics = vim.diagnostic.get(bufnr, {
+		lnum = cursor_row,
+	})
+
+	-- Find diagnostic that spans cursor position
+	for _, diagnostic in ipairs(diagnostics) do
+		local start_col = diagnostic.col
+		local end_col = diagnostic.end_col or diagnostic.col
+
+		if cursor_col >= start_col and cursor_col <= end_col then
+			return diagnostic
+		end
+	end
+
+	-- If no exact match, return any diagnostic on the line
+	return diagnostics[1]
+end
+
+function M.generate_prompt(template_name)
+	local diagnostic = get_cursor_diagnostic()
+	if not diagnostic then
+		error("No diagnostic under cursor")
+	end
 
 	local data = M.extract()
-	if not data.diagnostics[diagnostic_index] then
-		error(string.format("No diagnostic at index %d", diagnostic_index))
+
+	-- Find the index of our cursor diagnostic in the full list
+	local diagnostic_index
+	for i, d in ipairs(data.diagnostics) do
+		if d.range.start.row == diagnostic.lnum and d.range.start.col == diagnostic.col then
+			diagnostic_index = i
+			break
+		end
+	end
+
+	if not diagnostic_index then
+		error("Failed to find cursor diagnostic in extracted data")
 	end
 
 	local manager = require("diagnostic-extractor.template").get_manager()
-	return manager:render(template_name, {
+	local template = manager:get_template(template_name)
+	if not template then
+		error(string.format("Template '%s' not found", template_name))
+	end
+
+	return manager:render(template, {
 		filename = data.filename,
 		language = data.language,
 		diagnostic = data.diagnostics[diagnostic_index],
@@ -88,17 +128,31 @@ local function create_commands()
 	vim.api.nvim_create_user_command("DiagnosticPrompt", function(opts)
 		local args = vim.split(opts.args, "%s+")
 		local template = args[1] or "fix"
-		local index = tonumber(args[2]) or 1
 
-		local prompt = M.generate_prompt(template, index)
+		local prompt = M.generate_prompt(template)
 		vim.fn.setreg("+", prompt)
-		vim.notify(string.format("Copied %s prompt to clipboard (diagnostic #%d)!", template, index))
+		vim.notify("Copied diagnostic prompt to clipboard!")
 	end, {
-		nargs = "*",
+		nargs = "?",
 		complete = function()
 			return vim.tbl_keys(require("diagnostic-extractor.template").get_templates())
 		end,
 	})
+
+	-- vim.api.nvim_create_user_command("DiagnosticPrompt", function(opts)
+	-- 	local args = vim.split(opts.args, "%s+")
+	-- 	local template = args[1] or "fix"
+	-- 	local index = tonumber(args[2]) or 1
+	--
+	-- 	local prompt = M.generate_prompt(template, index)
+	-- 	vim.fn.setreg("+", prompt)
+	-- 	vim.notify(string.format("Copied %s prompt to clipboard (diagnostic #%d)!", template, index))
+	-- end, {
+	-- 	nargs = "*",
+	-- 	complete = function()
+	-- 		return vim.tbl_keys(require("diagnostic-extractor.template").get_templates())
+	-- 	end,
+	-- })
 end
 
 -- Initialize plugin

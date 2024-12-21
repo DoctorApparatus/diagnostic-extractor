@@ -3,8 +3,6 @@
 ---@field private filters table<string,fun(value:any,...):any>
 local Engine = {}
 
----Create a new template engine instance
----@return TemplateEngine
 function Engine.new()
 	return setmetatable({
 		patterns = {
@@ -31,13 +29,10 @@ function Engine.new()
 				return value ~= nil and value or default_value
 			end,
 		},
+		templates = {}, -- Add this line
 	}, { __index = Engine })
 end
 
----Resolve variable from context
----@param var string
----@param context table
----@return any
 function Engine:resolve_var(var, context)
 	-- Handle literal values
 	if var:match("^'.*'$") or var:match('^".*"$') then
@@ -58,6 +53,24 @@ function Engine:resolve_var(var, context)
 	end
 	if var == "nil" or var == "null" then
 		return nil
+	end
+
+	-- Handle addition operations (for line numbers)
+	local base, op, num = var:match("(.+)%s*([%+%-%*%/])%s*(%d+)")
+	if base and op and num then
+		local base_val = self:resolve_var(base, context)
+		if type(base_val) == "number" then
+			num = tonumber(num)
+			if op == "+" then
+				return base_val + num
+			elseif op == "-" then
+				return base_val - num
+			elseif op == "*" then
+				return base_val * num
+			elseif op == "/" then
+				return base_val / num
+			end
+		end
 	end
 
 	-- Handle table access
@@ -104,10 +117,13 @@ function Engine:eval_condition(condition, context)
 	return value ~= nil and value ~= false and value ~= ""
 end
 
----Handle control blocks
----@param template string
----@param context table
----@return string
+---Get template content by name
+---@param name string
+---@return string?
+function Engine:get_template(name)
+	return self.templates[name]
+end
+
 function Engine:handle_blocks(template, context)
 	local result = template
 
@@ -125,11 +141,11 @@ function Engine:handle_blocks(template, context)
 
 		local condition = result:match(self.patterns.if_start, if_start)
 		local content = result:sub(if_end + 1, block_end - 1)
-
 		local should_render = self:eval_condition(condition, context)
-		local replacement = should_render and self:render(content, context) or ""
 
-		result = result:sub(1, if_start - 1) .. replacement .. result:sub(block_end + 4)
+		-- Replace the entire if block
+		local replacement = should_render and self:render(content, context) or ""
+		result = result:sub(1, if_start - 1) .. replacement .. result:sub(block_end + 6)
 	end
 
 	-- Handle for blocks
@@ -146,10 +162,9 @@ function Engine:handle_blocks(template, context)
 
 		local var, collection = result:match(self.patterns.for_start, for_start)
 		local content = result:sub(for_end + 1, block_end - 1)
-
 		local items = self:resolve_var(collection, context)
-		local replacements = {}
 
+		local replacements = {}
 		if type(items) == "table" then
 			for i, item in ipairs(items) do
 				local loop_ctx = vim.tbl_extend("force", {}, context, {
@@ -168,6 +183,22 @@ function Engine:handle_blocks(template, context)
 	end
 
 	return result
+end
+
+---Validate template syntax
+---@param template string
+---@return boolean success
+---@return string? error
+function Engine:validate(template)
+	-- Try rendering with empty context to catch syntax errors
+	local ok, err = pcall(function()
+		self:render(template, {})
+	end)
+
+	if not ok then
+		return false, err
+	end
+	return true
 end
 
 ---Render template with context

@@ -3,77 +3,43 @@
 ---Template management for diagnostic extraction
 ---@brief ]]
 
-local TemplateManager = require("diagnostic-extractor.template_engine").TemplateManager
-
--- Single template manager instance
+local TemplateEngine = require("diagnostic-extractor.template_engine").Engine
 local manager = nil
 
 local M = {}
 
----Default diagnostic analysis template
 local default_templates = {
 	fix = [[
 DIAGNOSTIC REPORT
 ===============
-Language: {{ language|default "unknown" }}
-File: {{ filename|default "unknown" }}
+Language: {{ language }}
+File: {{ filename }}
 
 ERROR DETAILS
 ------------
-Message: {{ diagnostic.diagnostic.message }}
+Error: {{ diagnostic.message }}
+Code: {{ diagnostic.code }} 
 Location: Line {{ diagnostic.range.start.row + 1 }}, Column {{ diagnostic.range.start.col + 1 }}
 Severity: {{ diagnostic.severity_name }}
-{% if diagnostic.code %}
-Code: {{ diagnostic.code }}
-{% endif %}
-{% if diagnostic.source %}
 Source: {{ diagnostic.source }}
-{% endif %}
+
+DETAILED ERROR
+-------------
+{{ diagnostic.user_data.lsp.data.rendered }}
 
 CODE CONTEXT
 -----------
-{% if diagnostic.context.lines %}
 {% for line in diagnostic.context.lines %}
-{{ diagnostic.range.start.row + 1 == diagnostic.context.start_line + loop.index - 1 ? ">" : " " }} {{ diagnostic.context.start_line + loop.index }}: {{ line }}
+{{ line }}
 {% endfor %}
-{% else %}
-No code context available
-{% endif %}
 
 SYNTAX CONTEXT
 -------------
-{% if diagnostic.context.treesitter %}
-Current Node: {{ diagnostic.context.treesitter.node_type|default "unknown" }}
-Syntax Path: {{ diagnostic.context.treesitter.parent_types|join " -> "|default "unknown" }}
-{% if diagnostic.context.treesitter.scope %}
-Scope: {{ diagnostic.context.treesitter.scope.type|default "unknown" }}
-{% endif %}
-
-{% if diagnostic.context.treesitter.type_info %}
-TYPE INFORMATION
----------------
-Type: {{ diagnostic.context.treesitter.type_info.type|default "unknown" }}
-{% if diagnostic.context.treesitter.type_info.source %}
-Inferred From: {{ diagnostic.context.treesitter.type_info.source }}
-{% endif %}
-{% if diagnostic.context.treesitter.type_info.traits %}
-Traits: {{ diagnostic.context.treesitter.type_info.traits|join ", " }}
-{% endif %}
-{% endif %}
-
-{% if diagnostic.context.treesitter.symbol_info %}
-SYMBOL INFORMATION
-----------------
-Name: {{ diagnostic.context.treesitter.symbol_info.name }}
-{% if diagnostic.context.treesitter.symbol_info.type %}
-Type: {{ diagnostic.context.treesitter.symbol_info.type }}
-{% endif %}
-{% if diagnostic.context.treesitter.symbol_info.kind %}
-Kind: {{ diagnostic.context.treesitter.symbol_info.kind }}
-{% endif %}
-Reference Count: {{ diagnostic.context.treesitter.symbol_info.references|length }}
-{% endif %}
-{% endif %}
+Node Type: {{ diagnostic.context.treesitter.node_type }}
+Parent Types: {{ diagnostic.context.treesitter.parent_types|join " -> " }}
+Scope Type: {{ diagnostic.context.treesitter.scope.type }}
+Scope Content:
+{{ diagnostic.context.treesitter.scope.text }}
 
 TASK
 ----
@@ -85,17 +51,14 @@ Please analyze this error and provide:
 }
 
 ---Get global template manager
----@return TemplateManager
+---@return TemplateEngine
 function M.get_manager()
 	if not manager then
-		manager = TemplateManager.new()
+		manager = TemplateEngine.new()
 
 		-- Register default templates
 		for name, source in pairs(default_templates) do
-			local ok, err = manager:register(name, source)
-			if not ok then
-				error(string.format("Failed to register template '%s': %s", name, err))
-			end
+			manager.templates[name] = source -- Directly set template
 		end
 	end
 	return manager
@@ -111,14 +74,31 @@ function M.get_templates()
 	return templates
 end
 
----Add a new template
----@param name string Template name
----@param source string Template source
----@param opts? {override?: boolean}
----@return boolean success
----@return string? error
 function M.add_template(name, source, opts)
-	return M.get_manager():register(name, source, opts)
+	opts = opts or {}
+
+	-- Create manager if it doesn't exist
+	if not manager then
+		manager = TemplateEngine.new()
+	end
+
+	if manager.templates[name] and not opts.override then
+		return false, string.format("Template '%s' already exists", name)
+	end
+
+	-- Verify template is valid
+	local ok, err = pcall(function()
+		manager:render(source, {}) -- Try rendering with empty context
+	end)
+
+	if not ok then
+		return false, string.format("Invalid template: %s", err)
+	end
+
+	-- Store the template
+	manager.templates[name] = source
+
+	return true
 end
 
 return M
